@@ -1,7 +1,11 @@
 node_modules/
 dist/
-src-tauri/target/
 .env
 .env.*
 !.env.example
 *.log
+server/dist/
+server/prisma/*.db
+server/prisma/*.db-journal
+server/backups/*
+!server/backups/.gitkeep

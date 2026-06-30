@@ -1,0 +1,132 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Fase 1: empresa, usuarios y auditoría básica.
+// Resto de entidades de negocio (Account, Invoice, Bill, ...) se agregan
+// en fases posteriores según DATA_MODEL.md.
+
+// Roles fijos para el MVP (no configurables todavía): "admin" | "contable" | "ventas".
+// Validados en la capa de aplicación (server/src/shared/permissions/roles.ts), no en la DB,
+// para no añadir una tabla Role/Permission antes de que el negocio la necesite.
+model Company {
+  id                   String   @id @default(cuid())
+  displayName          String
+  legalName            String?
+  taxId                String?
+  baseCurrency         String   @default("CRC")
+  secondaryCurrency    String?  @default("USD")
+  locale               String   @default("es-CR")
+  fiscalYearStartMonth Int      @default(1)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  users          User[]
+  auditLogs      AuditLog[]
+  accounts       Account[]
+  journalEntries JournalEntry[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  companyId    String
+  email        String   @unique
+  passwordHash String
+  name         String
+  role         String
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  company               Company        @relation(fields: [companyId], references: [id])
+  auditLogs             AuditLog[]
+  createdJournalEntries JournalEntry[]
+
+  @@index([companyId])
+}
+
+// Fase 2: nucleo contable (catalogo de cuentas y partida doble).
+// Tipos de cuenta fijos, igual que los roles: ver server/src/shared/accounting/accountTypes.ts.
+model Account {
+  id        String   @id @default(cuid())
+  companyId String
+  code      String
+  name      String
+  type      String
+  parentId  String?
+  isSystem  Boolean  @default(false)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company      Company       @relation(fields: [companyId], references: [id])
+  parent       Account?      @relation("AccountHierarchy", fields: [parentId], references: [id])
+  children     Account[]     @relation("AccountHierarchy")
+  journalLines JournalLine[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+}
+
+// Asientos siempre se crean ya confirmados ("posted"): no hay edicion de asientos
+// existentes, solo creacion y reverso (asiento inverso), lo que cumple el bloqueo
+// de edicion del roadmap sin necesitar un estado "draft" todavia.
+model JournalEntry {
+  id              String   @id @default(cuid())
+  companyId       String
+  date            DateTime
+  memo            String?
+  status          String   @default("posted")
+  sourceType      String   @default("manual")
+  sourceId        String?
+  reversalOfId    String?  @unique
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+
+  company       Company       @relation(fields: [companyId], references: [id])
+  reversalOf    JournalEntry? @relation("EntryReversal", fields: [reversalOfId], references: [id])
+  reversedBy    JournalEntry? @relation("EntryReversal")
+  createdByUser User?         @relation(fields: [createdByUserId], references: [id])
+  lines         JournalLine[]
+
+  @@index([companyId])
+  @@index([date])
+}
+
+model JournalLine {
+  id             String  @id @default(cuid())
+  journalEntryId String
+  accountId      String
+  debit          Int     @default(0)
+  credit         Int     @default(0)
+  memo           String?
+
+  journalEntry JournalEntry @relation(fields: [journalEntryId], references: [id])
+  account      Account      @relation(fields: [accountId], references: [id])
+
+  @@index([journalEntryId])
+  @@index([accountId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  companyId  String
+  userId     String?
+  action     String
+  entityType String
+  entityId   String?
+  before     Json?
+  after      Json?
+  createdAt  DateTime @default(now())
+
+  company Company @relation(fields: [companyId], references: [id])
+  user    User?   @relation(fields: [userId], references: [id])
+
+  @@index([companyId])
+  @@index([userId])
+}

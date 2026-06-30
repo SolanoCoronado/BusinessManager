@@ -1,23 +1,28 @@
-import { Banknote } from "lucide-react";
+import { Banknote, LogOut } from "lucide-react";
 import type { ReactNode } from "react";
 
-import type { CompanyProfile } from "../config/companyProfile";
 import { PRODUCT_CONFIG } from "../config/product";
 import { APP_MODULES, type ModuleId } from "../routes/moduleCatalog";
+import { BackendStatus } from "../../shared/components/BackendStatus";
+import type { CompanyProfileDto } from "../../shared/lib/apiClient";
 import { cn } from "../../shared/utils/cn";
 
 type AppLayoutProps = {
   children: ReactNode;
   activeModuleId: ModuleId;
-  company: CompanyProfile;
+  company: CompanyProfileDto;
+  userName: string;
   onNavigate: (moduleId: ModuleId) => void;
+  onLogout: () => void;
 };
 
 export function AppLayout({
   children,
   activeModuleId,
   company,
+  userName,
   onNavigate,
+  onLogout,
 }: AppLayoutProps) {
   return (
     <div className="flex min-h-screen bg-ink-50 text-ink-900">
@@ -64,13 +69,25 @@ export function AppLayout({
             <p className="text-sm text-ink-700">Empresa activa</p>
             <h1 className="text-lg font-semibold">{company.displayName}</h1>
           </div>
-          <button
-            className="rounded-md bg-mint-700 px-4 py-2 text-sm font-semibold text-white hover:bg-mint-600"
-            onClick={() => onNavigate("business")}
-            type="button"
-          >
-            Perfil del negocio
-          </button>
+          <div className="flex items-center gap-4">
+            <BackendStatus />
+            <span className="text-sm text-ink-700">{userName}</span>
+            <button
+              className="rounded-md bg-mint-700 px-4 py-2 text-sm font-semibold text-white hover:bg-mint-600"
+              onClick={() => onNavigate("business")}
+              type="button"
+            >
+              Perfil del negocio
+            </button>
+            <button
+              aria-label="Cerrar sesion"
+              className="grid h-9 w-9 place-items-center rounded-md border border-ink-100 text-ink-700 hover:border-mint-700 hover:text-mint-700"
+              onClick={onLogout}
+              type="button"
+            >
+              <LogOut aria-hidden="true" size={16} />
+            </button>
+          </div>
         </header>
 
         <main className="flex-1 overflow-auto p-6">{children}</main>

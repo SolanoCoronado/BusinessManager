@@ -1,303 +1,105 @@
-# LedgerLocal - Modelo de datos inicial
+# LedgerLocal - Modelo de datos
 
-## Estrategia
+> Reemplaza la versión anterior pensada para SQLite vía Tauri/Rust. El motor sigue siendo **SQLite** (gratis, un solo archivo), pero ahora se accede desde el backend Node vía **Prisma**. Ver `ARCHITECTURE.md` para el contexto general.
 
-La primera versión usará SQLite local con migraciones versionadas. La propuesta inicial es una sola base por instalación con `company_id` en las tablas de negocio para soportar múltiples empresas sin sincronización.
+Este documento describe las entidades principales en términos conceptuales. El `schema.prisma` definitivo vivirá en `server/prisma/schema.prisma` y se generará en una parte posterior del desarrollo.
 
-Las operaciones financieras confirmadas deben ejecutarse en transacciones SQLite para mantener consistencia entre documentos comerciales, asientos contables y auditoría.
+## Principios
 
-## Convenciones
+- Partida doble real: toda transacción de negocio (factura, pago, gasto) genera líneas de asiento (`journal_line`) que deben sumar cero.
+- Los documentos confirmados (facturas, pagos, asientos) no se editan: se anulan o se revierten con un asiento/documento inverso, manteniendo trazabilidad.
+- Todas las tablas operativas llevan `company_id` (ver decisión de multi-empresa en `ARCHITECTURE.md`).
+- Montos se almacenan como enteros en la unidad mínima de la moneda (centavos) para evitar errores de punto flotante. SQLite no tiene tipo `DECIMAL` nativo, así que esto es obligatorio, no opcional.
+- Fechas en UTC (`DateTime` de Prisma), formateadas en la zona horaria del negocio solo en la capa de presentación.
 
-- Claves primarias: `id` como UUID o ULID en texto.
-- Fechas: ISO 8601 en UTC para timestamps; fechas contables como `YYYY-MM-DD`.
-- Montos: enteros en unidad menor cuando sea posible, con `currency_code`; para CRC puede usarse escala 2 por consistencia contable.
-- Estados: enums controlados en aplicación y constraints donde aplique.
-- Eliminación: lógica para entidades críticas mediante `archived_at`, `voided_at`, `deleted_at` o estado.
-- Auditoría: toda operación importante registra evento local.
+## Entidades
 
-## Tablas mínimas
+### Company
+Datos del negocio: nombre, identificación fiscal, moneda base, moneda secundaria, período fiscal, dirección, logo.
 
-### Configuración y seguridad
+### User
+Usuarios locales de la instalación. `email`, `passwordHash`, `name`, `active`, relación a `Role`.
 
-- `companies`
-- `users`
-- `roles`
-- `user_roles`
-- `settings`
-- `fiscal_periods`
-- `audit_events`
+### Role / Permission
+Roles (`admin`, `contable`, `ventas`, extensibles) con permisos por módulo y acción (`view`, `create`, `edit`, `delete`) sobre cada recurso.
 
-### Contabilidad
+### Account (Plan de cuentas)
+Catálogo de cuentas contables jerárquico: `code`, `name`, `type` (`asset`, `liability`, `equity`, `income`, `expense`), `parentId`, `isSystem` (cuentas que el sistema necesita y no se pueden borrar), `active`.
 
-- `chart_of_accounts`
-- `journal_entries`
-- `journal_entry_lines`
-- `sequence_counters`
-- `tax_rates`
+### JournalEntry / JournalLine
+`JournalEntry`: cabecera del asiento (`date`, `memo`, `status`: `draft`/`posted`/`reversed`, `sourceType`, `sourceId` para trazar de dónde vino — factura, pago, manual).
+`JournalLine`: `accountId`, `debit`, `credit` (uno de los dos en cero), `entityType`/`entityId` opcional (cliente/proveedor) para reportes de auxiliares.
 
-### Terceros y catálogo operativo
+Invariante: la suma de `debit` de un `JournalEntry` debe igualar la suma de `credit` antes de poder pasar a `posted`.
 
-- `customers`
-- `vendors`
-- `products_services`
-- `attachments`
+### Customer / Vendor
+`name`, `taxId` opcional, `email`, `phone`, `address`, `paymentTermsDays`, `currency`, `defaultAccountId` (CxC o CxP asociada), `active`, saldo calculado (no almacenado, derivado de facturas/pagos).
 
-### Ventas y cobros
+### Product
+`sku`, `name`, `type` (`product`/`service`), `unitPrice`, `taxRateId`, `trackInventory` (bool), `stockQuantity` (si aplica), `incomeAccountId`, `expenseAccountId`.
 
-- `invoices`
-- `invoice_lines`
-- `payments`
+### TaxRate
+`name`, `rate` (porcentaje), `accountId` (cuenta de pasivo donde se acumula el impuesto cobrado).
 
-### Compras, gastos y pagos
+### Invoice / InvoiceLine
+`Invoice`: `customerId`, `number` (correlativo por empresa), `issueDate`, `dueDate`, `currency`, `exchangeRate`, `status` (`draft`/`confirmed`/`paid`/`partially_paid`/`void`), `subtotal`, `taxTotal`, `total`, `balanceDue`.
+`InvoiceLine`: `productId` opcional, `description`, `quantity`, `unitPrice`, `taxRateId`, `lineTotal`.
 
-- `expenses`
-- `bills`
-- `bill_lines`
-
-### Banco y conciliación
-
-- `bank_accounts`
-- `bank_transactions`
-- `bank_reconciliations`
-- `bank_reconciliation_items`
-
-### Respaldo
+Al confirmar una factura se genera un `JournalEntry`: débito a Cuentas por Cobrar, crédito a Ingresos (y crédito a Impuestos por Pagar si aplica).
 
-- `backups`
+### Bill / BillLine
+Análogo a Invoice pero para proveedores (cuentas por pagar). Al confirmar: débito a Gastos/Inventario, crédito a Cuentas por Pagar.
 
-## Tablas adicionales recomendadas
+### Payment
+`type` (`customer_payment`/`vendor_payment`), `invoiceId` o `billId`, `amount`, `date`, `method` (`cash`/`bank_transfer`/`card`/`other`), `bankAccountId` opcional.
+Genera asiento: para pago de cliente, débito Banco/Caja, crédito CxC; para pago a proveedor, débito CxP, crédito Banco/Caja. Valida que `amount` no exceda el saldo pendiente del documento.
 
-- `document_events`: historial específico de documentos comerciales.
-- `payment_allocations`: aplicación de pagos a facturas o cuentas por pagar.
-- `account_balances_cache`: cache recalculable por período para reportes, si el rendimiento lo exige.
-- `csv_import_batches`: trazabilidad de importaciones bancarias.
-- `csv_import_rows`: filas importadas, errores y estado de confirmación.
-- `reversal_links`: relación explícita entre asientos originales y reversos, si no se modela directamente en `journal_entries`.
-
-## Entidades principales
-
-### `companies`
+### Expense
+Gastos pagados directamente (sin pasar por `Bill`), para compras menores. `accountId` (cuenta de gasto), `amount`, `date`, `paidFrom` (cuenta de banco/caja), `vendorId` opcional.
 
-Campos clave:
-
-- `id`
-- `legal_name`
-- `display_name`
-- `tax_id`
-- `address`
-- `base_currency`
-- `secondary_currency`
-- `fiscal_year_start_month`
-- `accounting_method`
-- `is_active`
-- `archived_at`
-- `created_at`
-- `updated_at`
+### BankAccount
+`name`, `accountId` (cuenta contable asociada, tipo activo), `currency`, `openingBalance`.
 
-### `users`
-
-Campos clave:
-
-- `id`
-- `company_id`
-- `name`
-- `username`
-- `password_hash`
-- `password_algorithm`
-- `is_active`
-- `last_login_at`
-- `created_at`
-- `updated_at`
-
-No se guardan contraseñas en texto plano.
-
-### `chart_of_accounts`
-
-Campos clave:
-
-- `id`
-- `company_id`
-- `code`
-- `name`
-- `type`
-- `subtype`
-- `parent_account_id`
-- `is_active`
-- `allows_posting`
-- `currency_code`
-- `created_at`
-- `updated_at`
-
-Tipos mínimos:
-
-- Activo.
-- Pasivo.
-- Patrimonio.
-- Ingreso.
-- Costo de ventas.
-- Gasto.
-
-### `journal_entries`
-
-Campos clave:
-
-- `id`
-- `company_id`
-- `entry_number`
-- `entry_date`
-- `description`
-- `reference`
-- `source_type`
-- `source_id`
-- `status`
-- `created_by_user_id`
-- `confirmed_by_user_id`
-- `created_at`
-- `confirmed_at`
-- `reversed_entry_id`
-
-Estados:
-
-- `draft`
-- `confirmed`
-- `reverted`
-
-### `journal_entry_lines`
-
-Campos clave:
-
-- `id`
-- `journal_entry_id`
-- `account_id`
-- `description`
-- `debit_amount`
-- `credit_amount`
-- `currency_code`
-- `line_order`
-
-Reglas:
-
-- No permitir débitos o créditos negativos.
-- Una línea no debe tener débito y crédito simultáneamente.
-- Un asiento confirmado requiere al menos dos líneas.
-- La suma de débitos debe ser igual a la suma de créditos.
-
-SQLite no puede garantizar fácilmente esta regla con un simple constraint de tabla; debe validarse en servicio de dominio y transacción, con pruebas unitarias.
-
-### `invoices`
-
-Campos clave:
-
-- `id`
-- `company_id`
-- `customer_id`
-- `invoice_number`
-- `quote_id`
-- `status`
-- `issue_date`
-- `due_date`
-- `subtotal_amount`
-- `discount_amount`
-- `tax_amount`
-- `total_amount`
-- `paid_amount`
-- `balance_due`
-- `currency_code`
-- `journal_entry_id`
-- `created_by_user_id`
-- `confirmed_at`
-- `voided_at`
-
-Estados:
-
-- `draft`
-- `confirmed`
-- `partially_paid`
-- `paid`
-- `overdue`
-- `voided`
-
-### `payments`
-
-Campos clave:
-
-- `id`
-- `company_id`
-- `payment_type`
-- `customer_id`
-- `vendor_id`
-- `payment_date`
-- `amount`
-- `currency_code`
-- `deposit_account_id`
-- `journal_entry_id`
-- `status`
-- `created_at`
-
-La asignación a facturas o cuentas por pagar se modela con `payment_allocations`.
-
-### `bank_transactions`
-
-Campos clave:
-
-- `id`
-- `company_id`
-- `bank_account_id`
-- `transaction_date`
-- `description`
-- `amount`
-- `currency_code`
-- `external_reference`
-- `fingerprint`
-- `status`
-- `journal_entry_id`
-- `reconciled_at`
-- `created_at`
-
-El `fingerprint` ayuda a detectar duplicados en importaciones CSV.
-
-## Integridad obligatoria
-
-- Toda factura confirmada tiene `journal_entry_id`.
-- Todo pago confirmado tiene `journal_entry_id`.
-- Todo gasto confirmado tiene `journal_entry_id`.
-- Todo asiento confirmado balancea débitos y créditos.
-- Una factura anulada no recibe pagos nuevos.
-- Un pago no puede superar el saldo pendiente salvo mecanismo explícito de anticipos.
-- Los documentos comerciales mantienen referencia a sus asientos.
-- Las claves foráneas deben estar activas con `PRAGMA foreign_keys = ON`.
-- Las consultas de escritura críticas deben ejecutarse dentro de transacciones.
-
-## Catálogo de cuentas inicial
-
-El catálogo inicial para una pequeña empresa de servicios/comercio incluirá:
-
-- Activo
-  - Caja.
-  - Bancos.
-  - Cuentas por cobrar.
-  - Inventario futuro.
-  - Impuestos por cobrar, si aplica.
-- Pasivo
-  - Cuentas por pagar.
-  - Impuestos por pagar.
-  - Préstamos.
-- Patrimonio
-  - Capital.
-  - Utilidades retenidas.
-- Ingreso
-  - Ventas de servicios.
-  - Ventas de productos.
-- Costo de ventas
-  - Costo de productos vendidos.
-- Gasto
-  - Alquiler.
-  - Servicios públicos.
-  - Sueldos como clasificación futura no nómina.
-  - Honorarios.
-  - Transporte.
-  - Gastos administrativos.
-
-## Reportes derivados
-
-Los reportes se generarán desde asientos confirmados y documentos vinculados. La fuente contable primaria será `journal_entries` + `journal_entry_lines`, no totales editables en UI.
+### BankTransaction
+Movimientos importados por CSV: `date`, `description`, `amount`, `bankAccountId`, `status` (`pending`/`matched`/`reconciled`/`ignored`), `matchedPaymentId` o `matchedJournalLineId`.
+
+### Reconciliation
+`bankAccountId`, `periodStart`, `periodEnd`, `statementEndingBalance`, `status` (`in_progress`/`completed`), lista de `BankTransaction` incluidos y diferencia calculada.
+
+### ExchangeRate
+`fromCurrency`, `toCurrency`, `rate`, `date`. Ingreso manual (sin llamadas externas obligatorias, ya que la app debe poder operar sin internet); opcionalmente un botón para traer tasas si hay conexión, sin depender de ello.
+
+### AuditLog
+`userId`, `action`, `entityType`, `entityId`, `before` (JSON), `after` (JSON), `timestamp`. Se escribe en cada mutación relevante (confirmar, anular, revertir, restaurar backup, cambios de permisos).
+
+### Backup
+Metadatos de respaldos realizados: `filename`, `createdAt`, `sizeBytes`, `createdBy`. El archivo físico es una copia del `.db` de SQLite guardada en `server/backups/`.
+
+## Diagrama ER (alto nivel)
+
+```mermaid
+erDiagram
+    COMPANY ||--o{ USER : tiene
+    COMPANY ||--o{ ACCOUNT : tiene
+    ACCOUNT ||--o{ JOURNAL_LINE : recibe
+    JOURNAL_ENTRY ||--|{ JOURNAL_LINE : contiene
+    CUSTOMER ||--o{ INVOICE : recibe
+    INVOICE ||--|{ INVOICE_LINE : contiene
+    VENDOR ||--o{ BILL : emite
+    BILL ||--|{ BILL_LINE : contiene
+    INVOICE ||--o{ PAYMENT : se_paga_con
+    BILL ||--o{ PAYMENT : se_paga_con
+    PAYMENT }o--|| BANK_ACCOUNT : afecta
+    PRODUCT ||--o{ INVOICE_LINE : aparece_en
+    PRODUCT ||--o{ BILL_LINE : aparece_en
+    BANK_ACCOUNT ||--o{ BANK_TRANSACTION : tiene
+    BANK_ACCOUNT ||--o{ RECONCILIATION : se_concilia
+    COMPANY ||--o{ AUDIT_LOG : registra
+```
+
+## Convenciones de Prisma/SQLite a tener en cuenta
+
+- Usar `Decimal`-como-entero (campo `Int` representando centavos) en vez de `Float` para todo monto.
+- `cuid()` o `uuid()` como `id` por defecto (Prisma lo soporta igual en SQLite).
+- Enums de Prisma se simulan en SQLite como `String` con validación en la capa de aplicación (Zod), ya que SQLite no tiene tipo enum nativo — Prisma lo maneja de forma transparente.
+- Índices explícitos en `company_id`, `customerId`, `vendorId`, `accountId`, `date` para que los reportes no sean lentos al crecer el archivo.
