@@ -5,8 +5,23 @@ export function isRole(value: string): value is Role {
   return (ROLES as readonly string[]).includes(value);
 }
 
-type Resource = "companies" | "users" | "accounting" | "invoices" | "reports";
-type Action = "view" | "create" | "edit" | "delete";
+export type Resource =
+  | "companies"
+  | "users"
+  | "accounting"
+  | "invoices"
+  | "reports"
+  | "customers"
+  | "vendors"
+  | "products"
+  | "taxRates"
+  | "bills"
+  | "payments"
+  | "expenses"
+  | "banking"
+  | "audit"
+  | "backups";
+export type Action = "view" | "create" | "edit" | "delete";
 
 // Matriz fija de permisos para el MVP. Si en el futuro el negocio necesita
 // roles personalizables, esto se mueve a una tabla Role/Permission en la DB
@@ -18,6 +33,16 @@ const PERMISSION_MATRIX: Record<Role, Record<Resource, Action[]>> = {
     accounting: ["view", "create", "edit", "delete"],
     invoices: ["view", "create", "edit", "delete"],
     reports: ["view", "create", "edit", "delete"],
+    customers: ["view", "create", "edit", "delete"],
+    vendors: ["view", "create", "edit", "delete"],
+    products: ["view", "create", "edit", "delete"],
+    taxRates: ["view", "create", "edit", "delete"],
+    bills: ["view", "create", "edit", "delete"],
+    payments: ["view", "create", "edit", "delete"],
+    expenses: ["view", "create", "edit", "delete"],
+    banking: ["view", "create", "edit", "delete"],
+    audit: ["view"],
+    backups: ["view", "create", "edit"],
   },
   contable: {
     companies: ["view"],
@@ -25,6 +50,16 @@ const PERMISSION_MATRIX: Record<Role, Record<Resource, Action[]>> = {
     accounting: ["view", "create", "edit"],
     invoices: ["view", "create", "edit"],
     reports: ["view"],
+    customers: ["view", "create", "edit"],
+    vendors: ["view", "create", "edit"],
+    products: ["view", "create", "edit"],
+    taxRates: ["view", "create", "edit"],
+    bills: ["view", "create", "edit"],
+    payments: ["view", "create", "edit"],
+    expenses: ["view", "create", "edit"],
+    banking: ["view", "create", "edit"],
+    audit: ["view"],
+    backups: ["view", "create"],
   },
   ventas: {
     companies: ["view"],
@@ -32,6 +67,16 @@ const PERMISSION_MATRIX: Record<Role, Record<Resource, Action[]>> = {
     accounting: ["view"],
     invoices: ["view", "create"],
     reports: ["view"],
+    customers: ["view", "create"],
+    vendors: ["view"],
+    products: ["view", "create"],
+    taxRates: ["view"],
+    bills: ["view"],
+    payments: ["view", "create"],
+    expenses: ["view"],
+    banking: ["view"],
+    audit: [],
+    backups: [],
   },
 };
 

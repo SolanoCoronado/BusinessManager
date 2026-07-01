@@ -81,3 +81,68 @@ describe("GET /api/v1/companies/exists", () => {
     await app.close();
   });
 });
+
+describe("PATCH /api/v1/companies/current", () => {
+  beforeEach(resetDatabase);
+  afterAll(() => prisma.$disconnect());
+
+  it("permite a un admin actualizar la configuracion regional", async () => {
+    const app = await buildApp();
+    const onboarding = await app.inject({
+      method: "POST",
+      url: "/api/v1/onboarding",
+      payload: validPayload,
+    });
+    const token = onboarding.json().accessToken as string;
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/api/v1/companies/current",
+      headers: { authorization: `Bearer ${token}` },
+      payload: { secondaryCurrency: "EUR", locale: "es-MX" },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().company).toMatchObject({ secondaryCurrency: "EUR", locale: "es-MX" });
+
+    await app.close();
+  });
+
+  it("un usuario con rol ventas no puede editar la empresa", async () => {
+    const app = await buildApp();
+    const onboarding = await app.inject({
+      method: "POST",
+      url: "/api/v1/onboarding",
+      payload: validPayload,
+    });
+    const adminToken = onboarding.json().accessToken as string;
+
+    await app.inject({
+      method: "POST",
+      url: "/api/v1/users",
+      headers: { authorization: `Bearer ${adminToken}` },
+      payload: {
+        name: "Vero Ventas",
+        email: "vero@wkd.test",
+        password: "otra-contrasena-larga",
+        role: "ventas",
+      },
+    });
+    const login = await app.inject({
+      method: "POST",
+      url: "/api/v1/auth/login",
+      payload: { email: "vero@wkd.test", password: "otra-contrasena-larga" },
+    });
+    const ventasToken = login.json().accessToken as string;
+
+    const response = await app.inject({
+      method: "PATCH",
+      url: "/api/v1/companies/current",
+      headers: { authorization: `Bearer ${ventasToken}` },
+      payload: { locale: "en-US" },
+    });
+    expect(response.statusCode).toBe(403);
+
+    await app.close();
+  });
+});

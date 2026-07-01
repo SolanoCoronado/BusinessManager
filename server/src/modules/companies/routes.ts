@@ -1,11 +1,11 @@
 import type { FastifyInstance } from "fastify";
 
-import { authenticate } from "../../shared/middleware/auth.js";
+import { authenticate, requirePermission } from "../../shared/middleware/auth.js";
 import { setRefreshCookie } from "../../shared/auth/cookies.js";
 import { issueTokenPair } from "../../shared/auth/issueTokens.js";
 import { ValidationError } from "../../shared/errors/AppError.js";
-import { getCurrentCompany, onboardCompany } from "./service.js";
-import { OnboardingSchema } from "./schemas.js";
+import { getCurrentCompany, onboardCompany, updateCompany } from "./service.js";
+import { OnboardingSchema, UpdateCompanySchema } from "./schemas.js";
 
 export async function companiesRoutes(app: FastifyInstance) {
   // Publico a proposito: el frontend lo usa para decidir si mostrar onboarding o login,
@@ -38,4 +38,22 @@ export async function companiesRoutes(app: FastifyInstance) {
     const company = await getCurrentCompany();
     return { company };
   });
+
+  app.patch(
+    "/api/v1/companies/current",
+    { preHandler: [authenticate, requirePermission("companies", "edit")] },
+    async (request) => {
+      const parsed = UpdateCompanySchema.safeParse(request.body);
+      if (!parsed.success) {
+        throw new ValidationError("Datos de empresa invalidos.", parsed.error.flatten());
+      }
+
+      const company = await updateCompany(
+        request.authUser!.companyId,
+        request.authUser!.sub,
+        parsed.data,
+      );
+      return { company };
+    },
+  );
 }

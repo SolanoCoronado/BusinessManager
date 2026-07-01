@@ -4,9 +4,21 @@ import { AppLayout } from "./layouts/AppLayout";
 import { AuthProvider, useAuth } from "./providers/AuthProvider";
 import type { ModuleId } from "./routes/moduleCatalog";
 import { AccountingPage } from "../modules/accounting/pages/AccountingPage";
+import { AuditPage } from "../modules/audit/pages/AuditPage";
 import { LoginPage } from "../modules/auth/pages/LoginPage";
 import { OnboardingPage } from "../modules/auth/pages/OnboardingPage";
+import { BackupsPage } from "../modules/backups/pages/BackupsPage";
+import { BankingPage } from "../modules/banking/pages/BankingPage";
+import { BillsPage } from "../modules/bills/pages/BillsPage";
+import { CustomersPage } from "../modules/customers/pages/CustomersPage";
 import { DashboardPage } from "../modules/dashboard/pages/DashboardPage";
+import { ExpensesPage } from "../modules/expenses/pages/ExpensesPage";
+import { InvoicesPage } from "../modules/invoices/pages/InvoicesPage";
+import { PaymentsPage } from "../modules/payments/pages/PaymentsPage";
+import { ProductsPage } from "../modules/products/pages/ProductsPage";
+import { ReconciliationPage } from "../modules/reconciliation/pages/ReconciliationPage";
+import { ReportsPage } from "../modules/reports/pages/ReportsPage";
+import { VendorsPage } from "../modules/vendors/pages/VendorsPage";
 import { ModulePlaceholderPage } from "../shared/components/ModulePlaceholderPage";
 
 function LoadingScreen() {
@@ -16,6 +28,22 @@ function LoadingScreen() {
     </div>
   );
 }
+
+const MODULE_PAGES: Partial<Record<ModuleId, () => React.JSX.Element>> = {
+  accounting: AccountingPage,
+  customers: CustomersPage,
+  vendors: VendorsPage,
+  products: ProductsPage,
+  invoices: InvoicesPage,
+  bills: BillsPage,
+  expenses: ExpensesPage,
+  payments: PaymentsPage,
+  banking: BankingPage,
+  reconciliation: ReconciliationPage,
+  reports: ReportsPage,
+  audit: AuditPage,
+  backups: BackupsPage,
+};
 
 function AuthenticatedApp({
   company,
@@ -27,6 +55,7 @@ function AuthenticatedApp({
   onLogout: () => void;
 }) {
   const [activeModuleId, setActiveModuleId] = useState<ModuleId>("dashboard");
+  const ModulePage = MODULE_PAGES[activeModuleId];
 
   return (
     <AppLayout
@@ -38,8 +67,8 @@ function AuthenticatedApp({
     >
       {activeModuleId === "dashboard" ? (
         <DashboardPage onNavigate={setActiveModuleId} />
-      ) : activeModuleId === "accounting" ? (
-        <AccountingPage />
+      ) : ModulePage ? (
+        <ModulePage />
       ) : (
         <ModulePlaceholderPage moduleId={activeModuleId} />
       )}

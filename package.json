@@ -11,6 +11,7 @@
     "preview": "vite preview --configLoader runner",
     "test": "vitest run --environment node --globals --configLoader runner",
     "test:watch": "vitest --environment node --globals --configLoader runner",
+    "test:e2e": "playwright test",
     "lint": "eslint src vite.config.ts",
     "format": "prettier --check .",
     "format:write": "prettier --write ."
@@ -26,6 +27,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.34.0",
+    "@playwright/test": "^1.61.1",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.3.0",
     "@types/react": "^19.1.11",

@@ -112,7 +112,9 @@ Aunque el despliegue objetivo es **un negocio por instancia**, el modelo de dato
 - Protección CSRF para rutas que usan cookies; CORS restringido a los orígenes configurados (típicamente solo la IP/puerto local del propio negocio).
 - Rate limiting en endpoints de auth.
 - Variables sensibles (JWT secret) vía variables de entorno, nunca en el repo.
-- Backups: copiar el archivo `.db` de SQLite (mecanismo nativo de la app, programable con una tarea simple), documentado en `docs/`. No requiere herramientas externas.
+- Backups: copiar el archivo `.db` de SQLite (`POST /api/v1/backups`), con copia de seguridad automática del estado actual antes de cada restauración (`POST /api/v1/backups/:filename/restore`). Implementado y probado (incluida una prueba real de restaurar mientras el servidor está corriendo).
+- **Cifrado: no implementado.** El archivo `.db` (y sus respaldos) quedan sin cifrar en disco. Decisión deliberada por ahora: integrar SQLCipher requeriría reemplazar el driver de SQLite que usa Prisma, lo cual no es trivial. Mitigación recomendada mientras tanto: cifrado de disco del sistema operativo (BitLocker en Windows, FileVault en macOS) y permisos de archivo restringidos a la cuenta que corre el servidor. No afirmar cumplimiento de cifrado ante el usuario hasta implementarlo y verificarlo de verdad.
+- **Keychain del sistema operativo: no aplica.** Era un requisito de la arquitectura anterior (Tauri, app de escritorio). En la arquitectura web, el único secreto del lado servidor es `JWT_SECRET`, gestionado como variable de entorno (`server/.env`, fuera del control de versiones) — el patrón estándar para procesos de servidor, no para apps de escritorio con keychain de usuario.
 
 ## API
 

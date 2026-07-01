@@ -1,9 +1,9 @@
 import { prisma } from "../../db/client.js";
 import { recordAudit } from "../../shared/audit/auditLog.js";
 import { hashPassword } from "../../shared/auth/password.js";
-import { ConflictError } from "../../shared/errors/AppError.js";
+import { ConflictError, NotFoundError } from "../../shared/errors/AppError.js";
 import { seedDefaultChartOfAccounts } from "../accounting/defaultChartOfAccounts.js";
-import type { OnboardingInput } from "./schemas.js";
+import type { OnboardingInput, UpdateCompanyInput } from "./schemas.js";
 
 export async function onboardCompany(input: OnboardingInput) {
   const existingCompanies = await prisma.company.count();
@@ -43,4 +43,37 @@ export async function onboardCompany(input: OnboardingInput) {
 
 export function getCurrentCompany() {
   return prisma.company.findFirst({ orderBy: { createdAt: "asc" } });
+}
+
+export async function updateCompany(
+  companyId: string,
+  actorUserId: string,
+  input: UpdateCompanyInput,
+) {
+  const existing = await prisma.company.findUnique({ where: { id: companyId } });
+  if (!existing) {
+    throw new NotFoundError("Empresa no encontrada.");
+  }
+
+  const updated = await prisma.company.update({ where: { id: companyId }, data: input });
+
+  await recordAudit(prisma, {
+    companyId,
+    userId: actorUserId,
+    action: "company.updated",
+    entityType: "Company",
+    entityId: companyId,
+    before: {
+      baseCurrency: existing.baseCurrency,
+      secondaryCurrency: existing.secondaryCurrency,
+      locale: existing.locale,
+    },
+    after: {
+      baseCurrency: updated.baseCurrency,
+      secondaryCurrency: updated.secondaryCurrency,
+      locale: updated.locale,
+    },
+  });
+
+  return updated;
 }

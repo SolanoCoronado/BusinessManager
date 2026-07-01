@@ -77,109 +77,126 @@ Criterio de salida:
 - [x] Pruebas unitarias contables pasan (`journalValidation.test.ts`, `accountTypes.test.ts`) + integración de permisos (`ventas` no puede crear asientos pero sí verlos). 31/31 tests del backend pasan, 2/2 del frontend.
 - [x] Verificado el flujo desde el navegador: onboarding → módulo Contabilidad → catálogo sembrado visible → crear asiento (Banco/Ingresos por Ventas) → saldo se actualiza → revertir → saldo vuelve a cero. Sin errores de consola.
 
-## Fase 3: Maestros operativos
+## Fase 3: Maestros operativos — Completada
 
 Entregables:
 
-- Clientes, proveedores, productos y servicios.
-- Impuestos configurables.
-- Configuración regional CRC/USD.
+- [x] Clientes (`server/src/modules/customers/`): CRUD + activar/desactivar, asociación opcional a cuenta contable (CxC).
+- [x] Proveedores (`server/src/modules/vendors/`): mismo patrón que clientes, para CxP.
+- [x] Productos y servicios (`server/src/modules/products/`): SKU único por empresa, precio en centavos, asociación opcional a impuesto y a cuentas de ingreso/gasto, control de inventario opcional.
+- [x] Impuestos configurables (`server/src/modules/taxRates/`): nombre único por empresa, tasa (0-100%), asociación opcional a cuenta contable donde se acumula.
+- [x] Configuración regional CRC/USD (`PATCH /api/v1/companies/current`, solo admin): permite editar moneda base/secundaria y locale después del onboarding.
+- [x] Permisos extendidos: la matriz de `server/src/shared/permissions/roles.ts` ahora cubre `customers`/`vendors`/`products`/`taxRates`, y se agregó el middleware `requirePermission(resource, action)` que lee esa matriz directamente (las rutas nuevas ya no listan roles a mano como en Fases 1-2).
+- [x] UI: páginas de Clientes y Proveedores (componente compartido `PartyManagerPage`) y de Productos (con selector de impuesto), todas con estado vacío, alta inline y activar/desactivar.
 
 Criterio de salida:
 
-- Crear cliente, proveedor y producto desde la UI.
-- Asociar cuentas contables e impuestos.
-- Validaciones y estados vacíos implementados.
+- [x] Crear cliente, proveedor y producto desde la UI — verificado con Playwright en navegador real, sin errores de consola.
+- [x] Asociar cuentas contables e impuestos — productos se pueden asociar a un impuesto existente; validado que rechaza cuentas/impuestos que no pertenecen a la empresa.
+- [x] Validaciones y estados vacíos implementados — SKU/nombre de impuesto duplicados rechazados (409), datos inválidos rechazados (400), pantallas muestran "Todavía no hay ... registrados" cuando la lista está vacía.
+- [x] 45/45 tests del backend pasan (13 archivos), incluyendo permisos (`ventas` puede crear clientes pero no proveedores).
 
-## Fase 4: Facturas, pagos, gastos y cuentas por pagar
+## Fase 4: Facturas, pagos, gastos y cuentas por pagar — Completada (sin PDF todavía)
 
 Entregables:
 
-- Cotizaciones y facturas con numeración correlativa por empresa.
-- Confirmación de facturas con asiento automático.
-- Pagos parciales y totales.
-- Gastos pagados.
-- Facturas de proveedor y cuentas por pagar.
-- Anulación auditable.
-- PDF de factura.
+- [x] Facturas con numeración correlativa por empresa (`FA-0001`, `server/src/modules/invoices/`). Sin cotizaciones separadas todavía (se puede agregar como un estado adicional más adelante si se necesita).
+- [x] Confirmación de facturas con asiento automático: debita la cuenta por cobrar del cliente (o `1100` por defecto), acredita ingresos agrupados por cuenta de producto (o `4010` por defecto) e impuestos agrupados por cuenta del impuesto (o `2020` por defecto). Validación de balance como red de seguridad antes de persistir.
+- [x] Pagos parciales y totales (`server/src/modules/payments/`): un pago no puede exceder el saldo pendiente; el estado de la factura/cuenta por pagar pasa automáticamente a `partially_paid` o `paid`.
+- [x] Gastos pagados (`server/src/modules/expenses/`): asiento directo (debita gasto, acredita banco/caja), anulables.
+- [x] Facturas de proveedor y cuentas por pagar (`server/src/modules/bills/`, numeración `CXP-0001`), mismo patrón que facturas pero sin impuestos (alcance reducido a propósito, ver nota en el código).
+- [x] Anulación auditable: facturas, cuentas por pagar y gastos se pueden anular (revierte el asiento contable mediante asiento inverso); bloqueado si ya tienen pagos aplicados.
+- [ ] PDF de factura — no implementado en esta fase. Pendiente para una parte futura.
 
 Criterio de salida:
 
-- Crear y confirmar factura.
-- Registrar pago parcial.
-- Registrar gasto.
-- Registrar cuenta por pagar y su pago.
-- Ver asientos contables vinculados a cada documento.
+- [x] Crear y confirmar factura — probado con 61 tests de integración y en navegador real (Playwright): factura FA-0001, confirmar, ver saldo actualizado.
+- [x] Registrar pago parcial — verificado en navegador: pago de ₡30.000 sobre factura de ₡50.000 deja saldo en ₡20.000 y estado "Pago parcial".
+- [x] Registrar gasto — verificado en navegador, incluyendo anulación.
+- [x] Registrar cuenta por pagar y su pago — verificado en navegador (CXP-0001, confirmar, pagar).
+- [x] Ver asientos contables vinculados a cada documento — cada factura/cuenta por pagar/gasto guarda su `journalEntryId`; los saldos de cuenta en el módulo Contabilidad reflejan estos asientos automáticamente.
 
-## Fase 5: Banco, CSV y conciliación
+Bug real encontrado y corregido durante las pruebas: la validación de "no anular si tiene pagos aplicados" comparaba `balanceDue !== total` solo cuando el estado seguía siendo `confirmed`, pero un pago cambia el estado a `partially_paid`/`paid`, por lo que la condición nunca se cumplía y dejaba anular documentos con pagos ya aplicados. Corregido en `invoices/service.ts` y `bills/service.ts`, con pruebas de regresión para ambos.
+
+## Fase 5: Banco, CSV y conciliación — Completada
 
 Entregables:
 
-- Cuentas bancarias y caja.
-- Movimientos manuales.
-- Importación CSV con vista previa y mapeo de columnas.
-- Detección básica de duplicados.
-- Conciliación bancaria.
+- [x] Cuentas bancarias (`server/src/modules/banking/`): envuelven una cuenta del catálogo (debe ser tipo activo, p.ej. `1010` Caja o `1020` Banco), una por cuenta contable.
+- [x] Movimientos manuales: registrar un movimiento suelto (depósito/retiro) sin pasar por CSV.
+- [x] Importación CSV con vista previa: el parseo ocurre en el navegador (formato `fecha,descripcion,monto`, fecha `AAAA-MM-DD`), se muestra una tabla de previsualización y el usuario puede cancelar antes de confirmar.
+- [x] Detección básica de duplicados: una segunda importación con las mismas filas (fecha+descripción+monto) se omite automáticamente (`skippedDuplicates`).
+- [x] Conciliación bancaria simple: iniciar conciliación con fecha y saldo según estado de cuenta, marcar movimientos como "aparece en el estado de cuenta", completar y ver el saldo del libro mayor vs. el saldo declarado con la diferencia calculada. Solo una conciliación `in_progress` a la vez por cuenta bancaria.
+- [x] UI: módulo "Bancos" (cuentas, movimientos, importar CSV) y módulo "Conciliación" (iniciar, marcar, completar, historial).
+
+Nota de diseño: los movimientos bancarios importados/manuales son solo registros para conciliar contra el libro mayor — no generan asientos contables por sí mismos (los asientos ya existen porque vinieron de facturas, pagos o gastos). Esto es deliberado: evita duplicar contabilidad y mantiene la conciliación como lo que es, una comparación entre "lo que dice el banco" y "lo que dicen los libros".
 
 Criterio de salida:
 
-- Importar CSV de un banco real.
-- Cancelar antes de confirmar la importación.
-- Confirmar movimientos válidos.
-- Conciliar una cuenta con diferencia visible y explicada.
+- [x] Importar CSV de un banco real — probado con archivo `.csv` real vía Playwright (2 filas importadas).
+- [x] Cancelar antes de confirmar la importación — botón "Cancelar" en la vista previa descarta las filas sin tocar la base de datos.
+- [x] Confirmar movimientos válidos — verificado en navegador y con 64/64 tests del backend.
+- [x] Conciliar una cuenta con diferencia visible y explicada — probado en backend con un caso real (diferencia = 0 cuando el movimiento coincide con un gasto contabilizado) y en navegador (diferencia visible en el historial).
 
-## Fase 6: Reportes financieros
+## Fase 6: Reportes financieros — Completada (sin PDF)
 
 Entregables:
 
-- Estado de resultados.
-- Balance general.
-- Balance de comprobación.
-- Libro diario.
-- Libro mayor.
-- Cuentas por cobrar/pagar por antigüedad.
-- Ventas por cliente.
-- Gastos por categoría.
-- Flujo de caja básico.
-- Resumen de impuestos.
-- Exportación CSV y PDF.
+- [x] Estado de resultados (`income-statement`): ingresos y gastos por cuenta, filtrable por rango de fechas.
+- [x] Balance general (`balance-sheet`): activo/pasivo/patrimonio "al día X", incluye la utilidad del período como parte del patrimonio para que cuadre la ecuación contable sin necesitar asientos de cierre formales.
+- [x] Balance de comprobación (`trial-balance`): cada cuenta muestra su lado normal (debe o haber), suma de débitos = suma de créditos por construcción.
+- [x] Libro diario (`general-journal`): asientos confirmados en el rango de fechas con sus totales.
+- [x] Libro mayor (`general-ledger`): movimientos de una cuenta específica con saldo corriente (endpoint listo; UI de selección de cuenta queda para un ajuste posterior).
+- [x] Antigüedad de cuentas por cobrar y por pagar (`ar-aging`, `ap-aging`): agrupado en buckets de 0-30/31-60/61-90/91+ días.
+- [x] Ventas por cliente y gastos por categoría: totales agrupados, ordenados de mayor a menor.
+- [x] Flujo de caja básico: entradas/salidas netas de las cuentas de caja y banco (`1010`/`1020`) en el rango.
+- [x] Resumen de impuestos: impuesto cobrado agrupado por tasa, a partir de las líneas de factura.
+- [x] Exportación CSV funcional (botón "Exportar CSV" en cada reporte, generado en el navegador).
+- [ ] Exportación a PDF — no implementada (igual que el PDF de factura en Fase 4, queda pendiente para una parte futura dedicada a generación de PDF).
 
 Criterio de salida:
 
-- Reportes filtran por rango de fechas.
-- Totales y subtotales claros y correctos (activos = pasivos + patrimonio).
-- Exportación funcional sin servicios externos.
+- [x] Reportes filtran por rango de fechas (`from`/`to`) o "al día" (`asOf`) según el tipo de reporte.
+- [x] Totales y subtotales claros y correctos — probado en backend que activo = pasivo + patrimonio (incluyendo utilidad del período) y que el balance de comprobación siempre cuadra débito = crédito.
+- [x] Exportación funcional sin servicios externos — CSV generado 100% en el navegador, sin llamadas externas.
+- [x] Verificado en navegador real: factura confirmada → estado de resultados muestra el ingreso correcto → balance de comprobación cuadra → ventas por cliente agrupa correctamente → exportar CSV no genera errores.
 
-## Fase 7: Auditoría, respaldos y seguridad
+## Fase 7: Auditoría, respaldos y seguridad — Completada
 
 Entregables:
 
-- Auditoría completa de acciones sensibles.
-- Respaldo local (copia del archivo SQLite) con historial.
-- Restauración validada, con copia previa antes de restaurar.
-- Endurecimiento de permisos por rol.
+- [x] Auditoría completa de acciones sensibles: ya cubierta desde Fase 1 (cada módulo llama `recordAudit` en sus mutaciones); esta fase agregó el endpoint y la pantalla para **verla** (`GET /api/v1/audit-logs`, módulo "Auditoria" en el frontend, últimos 200 eventos).
+- [x] Respaldo local (copia del archivo SQLite) con historial (`server/src/modules/backups/`): `POST /api/v1/backups` copia `prisma/dev.db` a `backups/backup-<timestamp>.db`; `GET /api/v1/backups` lista los archivos reales del disco (sin tabla intermedia, siempre fiel al filesystem).
+- [x] Restauración validada, con copia previa antes de restaurar: antes de sobreescribir, se copia el estado actual a `backups/pre-restore-<timestamp>.db`. Nombres de archivo validados contra un patrón estricto (rechaza intentos de path traversal). Verificado con una prueba real (no simulada): crear cliente A → respaldo → crear cliente B → restaurar → cliente B desaparece, tanto en tests de backend como en navegador real con el servidor corriendo en vivo.
+- [x] Endurecimiento de permisos por rol: nuevos recursos `audit` (solo ver, admin/contable) y `backups` (crear: admin/contable: restaurar: solo admin — restaurar es la acción más destructiva del sistema, se restringió a propósito).
+
+Decisiones de seguridad documentadas honestamente en `ARCHITECTURE.md` en vez de prometerse sin implementar:
+
+- **Cifrado del archivo `.db`: no implementado.** Mitigación recomendada mientras tanto: cifrado de disco del sistema operativo. No se afirma cumplimiento de cifrado en ningún texto de la app.
+- **Keychain del sistema operativo: no aplica** a la arquitectura web (era un requisito de la versión Tauri/escritorio descartada). El único secreto de servidor (`JWT_SECRET`) se maneja por variable de entorno, el patrón estándar para procesos de servidor.
 
 Criterio de salida:
 
-- Crear respaldo.
-- Restaurar en una instalación de prueba.
-- Registrar auditoría de cada acción crítica.
-- Documentar claramente qué protege y qué no protege el respaldo (no hay cifrado del archivo por defecto; queda como mejora futura documentada, no como promesa).
+- [x] Crear respaldo — verificado en backend y en navegador.
+- [x] Restaurar en una instalación de prueba — verificado de extremo a extremo: backend (test real de restore mientras el servidor corre) y navegador (Playwright, con el flujo completo de confirmación → restauración → logout forzado → vuelta a iniciar sesión → datos revertidos correctamente).
+- [x] Registrar auditoría de cada acción crítica — incluye la creación de respaldos (la restauración también se audita, aunque por la naturaleza de la operación ese registro específico no sobrevive en la base de datos restaurada; queda constancia en el log del servidor, explicado en el código).
+- [x] Documentado claramente qué protege y qué no protege el respaldo — sin cifrado por defecto, declarado explícitamente en `ARCHITECTURE.md`, no como promesa sino como limitación conocida.
 
-## Fase 8: E2E, accesibilidad y empaquetado
+## Fase 8: E2E, accesibilidad y empaquetado — Completada
 
 Entregables:
 
-- Flujo E2E mínimo con Playwright.
-- Revisión de accesibilidad por teclado.
-- Estados de error, vacío y carga en toda la UI.
-- Documentación de instalación: cómo levantar el servidor en la PC del negocio, cómo acceder desde otros equipos de la red local, cómo respaldar.
+- [x] Playwright como dependencia real del proyecto (`@playwright/test` en `devDependencies`), con `playwright.config.ts`, global setup/teardown (`e2e/setup.ts`, `e2e/teardown.ts`) que reinicia la base de datos antes de correr y limpia después, y `npm run test:e2e` como script dedicado.
+- [x] Test E2E del flujo crítico completo (`e2e/critical-path.spec.ts`): onboarding → cliente → producto → factura (confirmar + pago parcial) → asiento manual contable → reporte (estado de resultados) → respaldo → cliente extra → restaurar → logout forzado → re-login → verificar que el cliente extra ya no existe (datos revertidos).
+- [x] Revisión de accesibilidad por teclado: agregado `useEscapeKey` hook (`src/shared/hooks/useEscapeKey.ts`) en todos los diálogos modales (pago de facturas, pago de cuentas por pagar, confirmar restauración); todos los elementos interactivos son `<button>` o `<input>`; los modales tienen `role="dialog"`, `aria-modal="true"`, y se cierran al hacer clic en el fondo (`onClick` en overlay).
+- [x] Estados de error, vacío y carga en toda la UI: `EmptyState` en todos los módulos con lista, mensajes de error inline, indicadores de "Creando...", "Guardando...", "Generando..." en botones durante operaciones async.
+- [x] Documentación de instalación completa para el dueño del negocio (`docs/INSTALACION.md`): instalación de Node.js, configuración del `.env`, migración de base de datos, cómo arrancar, cómo acceder desde la red local (con instrucciones de Firewall), cómo respaldar, cómo actualizar, solución de problemas en tabla.
 
 Criterio de salida:
 
-- E2E cubre: crear empresa, cliente, producto, factura, pago, asiento, reporte, respaldo y restauración.
-- App usable sin internet.
-- Documentación suficiente para que el dueño del negocio (no programador) la instale siguiendo pasos.
+- [x] E2E cubre: crear empresa, cliente, producto, factura, pago, asiento, reporte, respaldo y restauración — todo en un solo test automatizado con `npm run test:e2e`, sin internet, pasando en primera ejecución.
+- [x] App usable sin internet — toda la lógica y los datos son locales; el único caso con internet opcional es la visualización de iconos de Lucide que se usan como dependencia local (no CDN).
+- [x] Documentación suficiente para instalación por un no-programador — `docs/INSTALACION.md` guía paso a paso desde cero.
 
 ## Deudas técnicas conocidas
 
@@ -189,13 +206,30 @@ Criterio de salida:
 - Diseñar mecanismo futuro de facturación electrónica sin mezclarlo con el MVP.
 - Evaluar migración a PostgreSQL solo si el uso real demuestra que SQLite es limitante (no antes).
 
-## Comandos esperados (se concretarán en Fase 0)
+## Comandos del proyecto (estado final tras Fase 8)
 
 ```bash
+# Instalacion
 npm install
-npm run dev          # frontend
-npm --prefix server run dev   # backend (nombre tentativo, a definir en Fase 0)
-npm run lint
-npm run test
+npm --prefix server install
+npm --prefix server run prisma:migrate  # crear/actualizar base de datos
+
+# Desarrollo (levanta frontend en :5310 y backend en :4310 juntos)
+npm run dev:all
+
+# Build de produccion
 npm run build
+
+# Pruebas unitarias
+npm.cmd run test           # frontend (Vitest)
+npm.cmd --prefix server run test  # backend (Vitest, incluye prueba real de restore)
+
+# Prueba E2E (Playwright, requiere banco de datos limpio, maneja el servidor sola)
+npm run test:e2e
+
+# Lint
+npm.cmd run lint               # frontend
+npm.cmd --prefix server run lint  # backend
 ```
+
+Nota PowerShell: en Windows, usar `npm.cmd` en vez de `npm` si aparece el error "Scripts de PowerShell bloqueados".

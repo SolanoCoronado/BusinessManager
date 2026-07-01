@@ -17,3 +17,15 @@ export const OnboardingSchema = z.object({
 });
 
 export type OnboardingInput = z.infer<typeof OnboardingSchema>;
+
+export const UpdateCompanySchema = z.object({
+  displayName: z.string().min(1).optional(),
+  legalName: z.string().min(1).optional(),
+  taxId: z.string().optional(),
+  baseCurrency: z.string().length(3).optional(),
+  secondaryCurrency: z.string().length(3).optional(),
+  locale: z.string().optional(),
+  fiscalYearStartMonth: z.number().int().min(1).max(12).optional(),
+});
+
+export type UpdateCompanyInput = z.infer<typeof UpdateCompanySchema>;

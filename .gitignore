@@ -9,3 +9,4 @@ server/prisma/*.db
 server/prisma/*.db-journal
 server/backups/*
 !server/backups/.gitkeep
+server/backups-test/

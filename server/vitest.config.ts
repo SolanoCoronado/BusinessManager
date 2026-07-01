@@ -7,6 +7,7 @@ export default defineConfig({
     env: {
       DATABASE_URL: "file:./test.db",
       JWT_SECRET: "test-secret-do-not-use-in-prod",
+      BACKUPS_DIR: "backups-test",
     },
     globalSetup: ["./tests/globalSetup.ts"],
     fileParallelism: false,

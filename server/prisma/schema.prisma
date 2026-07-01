@@ -26,10 +26,21 @@ model Company {
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
-  users          User[]
-  auditLogs      AuditLog[]
-  accounts       Account[]
-  journalEntries JournalEntry[]
+  users            User[]
+  auditLogs        AuditLog[]
+  accounts         Account[]
+  journalEntries   JournalEntry[]
+  customers        Customer[]
+  vendors          Vendor[]
+  products         Product[]
+  taxRates         TaxRate[]
+  invoices         Invoice[]
+  bills            Bill[]
+  payments         Payment[]
+  expenses         Expense[]
+  bankAccounts     BankAccount[]
+  bankTransactions BankTransaction[]
+  reconciliations  Reconciliation[]
 }
 
 model User {
@@ -68,6 +79,17 @@ model Account {
   parent       Account?      @relation("AccountHierarchy", fields: [parentId], references: [id])
   children     Account[]     @relation("AccountHierarchy")
   journalLines JournalLine[]
+
+  customersAsDefaultAccount Customer[]    @relation("CustomerDefaultAccount")
+  vendorsAsDefaultAccount   Vendor[]      @relation("VendorDefaultAccount")
+  productsAsIncomeAccount   Product[]     @relation("ProductIncomeAccount")
+  productsAsExpenseAccount  Product[]     @relation("ProductExpenseAccount")
+  taxRatesAsAccount         TaxRate[]     @relation("TaxRateAccount")
+  billLinesAsAccount        BillLine[]    @relation("BillLineAccount")
+  expensesAsAccount         Expense[]     @relation("ExpenseAccount")
+  expensesAsPaidFromAccount Expense[]     @relation("ExpensePaidFromAccount")
+  paymentsAsAccount         Payment[]     @relation("PaymentAccount")
+  bankAccounts              BankAccount[]
 
   @@unique([companyId, code])
   @@index([companyId])
@@ -111,6 +133,302 @@ model JournalLine {
 
   @@index([journalEntryId])
   @@index([accountId])
+}
+
+// Fase 3: maestros operativos (clientes, proveedores, productos, impuestos).
+model Customer {
+  id               String   @id @default(cuid())
+  companyId        String
+  name             String
+  taxId            String?
+  email            String?
+  phone            String?
+  address          String?
+  paymentTermsDays Int      @default(0)
+  currency         String   @default("CRC")
+  defaultAccountId String?
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  company        Company   @relation(fields: [companyId], references: [id])
+  defaultAccount Account?  @relation("CustomerDefaultAccount", fields: [defaultAccountId], references: [id])
+  invoices       Invoice[]
+
+  @@index([companyId])
+}
+
+model Vendor {
+  id               String   @id @default(cuid())
+  companyId        String
+  name             String
+  taxId            String?
+  email            String?
+  phone            String?
+  address          String?
+  paymentTermsDays Int      @default(0)
+  currency         String   @default("CRC")
+  defaultAccountId String?
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  company        Company   @relation(fields: [companyId], references: [id])
+  defaultAccount Account?  @relation("VendorDefaultAccount", fields: [defaultAccountId], references: [id])
+  bills          Bill[]
+  expenses       Expense[]
+
+  @@index([companyId])
+}
+
+model TaxRate {
+  id        String   @id @default(cuid())
+  companyId String
+  name      String
+  rate      Float
+  accountId String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company      Company       @relation(fields: [companyId], references: [id])
+  account      Account?      @relation("TaxRateAccount", fields: [accountId], references: [id])
+  products     Product[]
+  invoiceLines InvoiceLine[]
+
+  @@unique([companyId, name])
+  @@index([companyId])
+}
+
+model Product {
+  id               String   @id @default(cuid())
+  companyId        String
+  sku              String
+  name             String
+  type             String
+  unitPrice        Int      @default(0)
+  taxRateId        String?
+  trackInventory   Boolean  @default(false)
+  stockQuantity    Int      @default(0)
+  incomeAccountId  String?
+  expenseAccountId String?
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  company        Company       @relation(fields: [companyId], references: [id])
+  taxRate        TaxRate?      @relation(fields: [taxRateId], references: [id])
+  incomeAccount  Account?      @relation("ProductIncomeAccount", fields: [incomeAccountId], references: [id])
+  expenseAccount Account?      @relation("ProductExpenseAccount", fields: [expenseAccountId], references: [id])
+  invoiceLines   InvoiceLine[]
+  billLines      BillLine[]
+
+  @@unique([companyId, sku])
+  @@index([companyId])
+}
+
+// Fase 4: documentos comerciales (facturas, cuentas por pagar, pagos, gastos).
+model Invoice {
+  id              String    @id @default(cuid())
+  companyId       String
+  customerId      String
+  number          String
+  issueDate       DateTime
+  dueDate         DateTime?
+  currency        String    @default("CRC")
+  status          String    @default("draft")
+  memo            String?
+  subtotal        Int       @default(0)
+  taxTotal        Int       @default(0)
+  total           Int       @default(0)
+  balanceDue      Int       @default(0)
+  journalEntryId  String?
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  company  Company       @relation(fields: [companyId], references: [id])
+  customer Customer      @relation(fields: [customerId], references: [id])
+  lines    InvoiceLine[]
+  payments Payment[]
+
+  @@unique([companyId, number])
+  @@index([companyId])
+  @@index([customerId])
+}
+
+model InvoiceLine {
+  id          String  @id @default(cuid())
+  invoiceId   String
+  productId   String?
+  description String
+  quantity    Float
+  unitPrice   Int
+  taxRateId   String?
+  lineTotal   Int
+  taxAmount   Int     @default(0)
+
+  invoice Invoice  @relation(fields: [invoiceId], references: [id])
+  product Product? @relation(fields: [productId], references: [id])
+  taxRate TaxRate? @relation(fields: [taxRateId], references: [id])
+
+  @@index([invoiceId])
+}
+
+model Bill {
+  id              String    @id @default(cuid())
+  companyId       String
+  vendorId        String
+  number          String
+  issueDate       DateTime
+  dueDate         DateTime?
+  currency        String    @default("CRC")
+  status          String    @default("draft")
+  memo            String?
+  total           Int       @default(0)
+  balanceDue      Int       @default(0)
+  journalEntryId  String?
+  createdByUserId String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  company  Company    @relation(fields: [companyId], references: [id])
+  vendor   Vendor     @relation(fields: [vendorId], references: [id])
+  lines    BillLine[]
+  payments Payment[]
+
+  @@unique([companyId, number])
+  @@index([companyId])
+  @@index([vendorId])
+}
+
+model BillLine {
+  id          String  @id @default(cuid())
+  billId      String
+  productId   String?
+  description String
+  quantity    Float
+  unitPrice   Int
+  accountId   String?
+  lineTotal   Int
+
+  bill    Bill     @relation(fields: [billId], references: [id])
+  product Product? @relation(fields: [productId], references: [id])
+  account Account? @relation("BillLineAccount", fields: [accountId], references: [id])
+
+  @@index([billId])
+}
+
+model Payment {
+  id              String   @id @default(cuid())
+  companyId       String
+  type            String
+  invoiceId       String?
+  billId          String?
+  amount          Int
+  date            DateTime
+  method          String   @default("cash")
+  accountId       String
+  memo            String?
+  journalEntryId  String?
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+
+  company Company  @relation(fields: [companyId], references: [id])
+  invoice Invoice? @relation(fields: [invoiceId], references: [id])
+  bill    Bill?    @relation(fields: [billId], references: [id])
+  account Account  @relation("PaymentAccount", fields: [accountId], references: [id])
+
+  @@index([companyId])
+  @@index([invoiceId])
+  @@index([billId])
+}
+
+model Expense {
+  id                String   @id @default(cuid())
+  companyId         String
+  vendorId          String?
+  accountId         String
+  paidFromAccountId String
+  amount            Int
+  date              DateTime
+  memo              String?
+  status            String   @default("posted")
+  journalEntryId    String?
+  createdByUserId   String?
+  createdAt         DateTime @default(now())
+
+  company         Company @relation(fields: [companyId], references: [id])
+  vendor          Vendor? @relation(fields: [vendorId], references: [id])
+  account         Account @relation("ExpenseAccount", fields: [accountId], references: [id])
+  paidFromAccount Account @relation("ExpensePaidFromAccount", fields: [paidFromAccountId], references: [id])
+
+  @@index([companyId])
+}
+
+// Fase 5: cuentas bancarias, movimientos importados y conciliacion simple.
+// BankAccount envuelve una cuenta del catalogo (tipicamente Caja o Banco) para poder
+// importar movimientos de un estado de cuenta y conciliarlos contra el libro mayor.
+model BankAccount {
+  id             String   @id @default(cuid())
+  companyId      String
+  name           String
+  accountId      String
+  currency       String   @default("CRC")
+  openingBalance Int      @default(0)
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  company         Company           @relation(fields: [companyId], references: [id])
+  account         Account           @relation(fields: [accountId], references: [id])
+  transactions    BankTransaction[]
+  reconciliations Reconciliation[]
+
+  @@unique([companyId, accountId])
+  @@index([companyId])
+}
+
+model BankTransaction {
+  id               String   @id @default(cuid())
+  companyId        String
+  bankAccountId    String
+  date             DateTime
+  description      String
+  amount           Int
+  status           String   @default("pending")
+  reconciliationId String?
+  importBatchId    String?
+  createdByUserId  String?
+  createdAt        DateTime @default(now())
+
+  company        Company         @relation(fields: [companyId], references: [id])
+  bankAccount    BankAccount     @relation(fields: [bankAccountId], references: [id])
+  reconciliation Reconciliation? @relation(fields: [reconciliationId], references: [id])
+
+  @@index([bankAccountId])
+  @@index([companyId])
+}
+
+model Reconciliation {
+  id                     String    @id @default(cuid())
+  companyId              String
+  bankAccountId          String
+  periodEnd              DateTime
+  statementEndingBalance Int
+  status                 String    @default("in_progress")
+  bookBalance            Int?
+  difference             Int?
+  createdByUserId        String?
+  completedAt            DateTime?
+  createdAt              DateTime  @default(now())
+
+  company      Company           @relation(fields: [companyId], references: [id])
+  bankAccount  BankAccount       @relation(fields: [bankAccountId], references: [id])
+  transactions BankTransaction[]
+
+  @@index([bankAccountId])
+  @@index([companyId])
 }
 
 model AuditLog {

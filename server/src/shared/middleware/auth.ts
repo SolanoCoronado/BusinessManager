@@ -2,7 +2,7 @@ import type { FastifyRequest } from "fastify";
 
 import { verifyAccessToken, type AccessTokenPayload } from "../auth/jwt.js";
 import { ForbiddenError, UnauthorizedError } from "../errors/AppError.js";
-import type { Role } from "../permissions/roles.js";
+import { can, type Action, type Resource, type Role } from "../permissions/roles.js";
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -32,6 +32,18 @@ export function requireRole(...roles: Role[]) {
     }
 
     if (!roles.includes(request.authUser.role)) {
+      throw new ForbiddenError();
+    }
+  };
+}
+
+export function requirePermission(resource: Resource, action: Action) {
+  return async function checkPermission(request: FastifyRequest) {
+    if (!request.authUser) {
+      throw new UnauthorizedError();
+    }
+
+    if (!can(request.authUser.role, resource, action)) {
       throw new ForbiddenError();
     }
   };
