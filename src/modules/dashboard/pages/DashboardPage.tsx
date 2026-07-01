@@ -3,15 +3,15 @@ import {
   BarChart3,
   FilePlus2,
   Landmark,
-  PackageCheck,
   PlusCircle,
   Receipt,
-  ShoppingCart,
-  TrendingUp,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import { PRODUCT_CONFIG } from "../../../app/config/product";
+import { useAuth } from "../../../app/providers/AuthProvider";
 import type { ModuleId } from "../../../app/routes/moduleCatalog";
+import { apiClient, ApiError } from "../../../shared/lib/apiClient";
 
 type DashboardPageProps = {
   onNavigate: (moduleId: ModuleId) => void;
@@ -22,6 +22,10 @@ const currencyFormatter = new Intl.NumberFormat("es-CR", {
   maximumFractionDigits: 0,
   style: "currency",
 });
+
+function formatCurrency(cents: number) {
+  return currencyFormatter.format(cents / 100);
+}
 
 const quickActions = [
   { label: "Factura", icon: FilePlus2, moduleId: "invoices" },
@@ -34,107 +38,196 @@ const quickActions = [
   moduleId: ModuleId;
 }>;
 
-const kpis = [
-  {
-    label: "Banco y caja",
-    value: 18425000,
-    helper: "+8.4% vs mes anterior",
-    moduleId: "banking",
-  },
-  {
-    label: "Ingresos del mes",
-    value: 32780000,
-    helper: "42 facturas emitidas",
-    moduleId: "invoices",
-  },
-  {
-    label: "Gastos del mes",
-    value: 21940000,
-    helper: "64% costo de inventario",
-    moduleId: "expenses",
-  },
-  {
-    label: "Utilidad estimada",
-    value: 10840000,
-    helper: "33.1% margen operativo",
-    moduleId: "reports",
-  },
-] satisfies Array<{
-  label: string;
-  value: number;
-  helper: string;
-  moduleId: ModuleId;
-}>;
-
-const monthlyPerformance = [
-  { month: "Ene", income: 23.4, expenses: 18.2 },
-  { month: "Feb", income: 25.1, expenses: 17.9 },
-  { month: "Mar", income: 28.7, expenses: 20.8 },
-  { month: "Abr", income: 26.9, expenses: 19.4 },
-  { month: "May", income: 31.2, expenses: 21.1 },
-  { month: "Jun", income: 32.8, expenses: 21.9 },
+const MONTH_LABELS = [
+  "Ene", "Feb", "Mar", "Abr", "May", "Jun",
+  "Jul", "Ago", "Sep", "Oct", "Nov", "Dic",
 ];
 
-const purchaseForecast = [
-  {
-    sku: "WKD-CAFE-1KG",
-    name: "Cafe premium 1 kg",
-    stock: 42,
-    dailyDemand: 8,
-    leadTimeDays: 6,
-    safetyStock: 18,
-    supplier: "Distribuidora Central",
-  },
-  {
-    sku: "WKD-FILTRO-100",
-    name: "Filtros paquete 100",
-    stock: 130,
-    dailyDemand: 19,
-    leadTimeDays: 4,
-    safetyStock: 35,
-    supplier: "Insumos del Oeste",
-  },
-  {
-    sku: "WKD-VASO-12OZ",
-    name: "Vasos 12 oz",
-    stock: 210,
-    dailyDemand: 36,
-    leadTimeDays: 5,
-    safetyStock: 80,
-    supplier: "Empaques CR",
-  },
-] satisfies Array<{
-  sku: string;
-  name: string;
-  stock: number;
-  dailyDemand: number;
-  leadTimeDays: number;
-  safetyStock: number;
-  supplier: string;
-}>;
+type IncomeStatementDto = { totalIncome: number; totalExpense: number; netIncome: number };
+type BalanceSheetDto = { assets: Array<{ code: string; balance: number }> };
+type AgingDto = { rows: Array<{ balanceDue: number }> };
+type TaxSummaryDto = { totalTaxCollected: number };
+type MonthPoint = { month: string; income: number; expenses: number };
 
-const openItems = [
-  { label: "Cuentas por cobrar", value: 6850000, detail: "9 facturas abiertas" },
-  { label: "Cuentas por pagar", value: 4130000, detail: "6 vencen esta semana" },
-  { label: "Impuesto reservado", value: 2210000, detail: "Estimado del periodo" },
-];
+type DashboardData = {
+  cashBalance: number;
+  monthIncome: number;
+  monthExpense: number;
+  netIncome: number;
+  arTotal: number;
+  arCount: number;
+  apTotal: number;
+  apCount: number;
+  taxReserved: number;
+  invoiceCount: number;
+  expenseCount: number;
+  monthlyPerformance: MonthPoint[];
+};
 
-function formatCurrency(value: number) {
-  return currencyFormatter.format(value);
+function monthBounds(monthsAgo: number, today: Date) {
+  const from = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - monthsAgo, 1));
+  const to =
+    monthsAgo === 0
+      ? today
+      : new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - monthsAgo + 1, 0));
+  return { from, to };
 }
 
-function getForecast(item: (typeof purchaseForecast)[number]) {
-  const reorderPoint = item.dailyDemand * item.leadTimeDays + item.safetyStock;
-  const daysOnHand = Math.floor(item.stock / item.dailyDemand);
-  const suggestedOrder = Math.max(reorderPoint * 2 - item.stock, 0);
+function toIso(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
 
-  return { daysOnHand, reorderPoint, suggestedOrder };
+async function loadDashboardData(token: string): Promise<DashboardData> {
+  const today = new Date();
+  const monthlyRanges = Array.from({ length: 6 }, (_, i) => monthBounds(5 - i, today));
+  const currentRange = monthlyRanges[5];
+
+  const [balanceSheet, arAging, apAging, taxSummary, invoicesRes, expensesRes, ...monthlyStatements] =
+    await Promise.all([
+      apiClient.getReport<BalanceSheetDto>(token, "balance-sheet", { asOf: toIso(today) }),
+      apiClient.getReport<AgingDto>(token, "ar-aging", { asOf: toIso(today) }),
+      apiClient.getReport<AgingDto>(token, "ap-aging", { asOf: toIso(today) }),
+      apiClient.getReport<TaxSummaryDto>(token, "tax-summary", {
+        from: toIso(currentRange.from),
+        to: toIso(currentRange.to),
+      }),
+      apiClient.listInvoices(token),
+      apiClient.listExpenses(token),
+      ...monthlyRanges.map((range) =>
+        apiClient.getReport<IncomeStatementDto>(token, "income-statement", {
+          from: toIso(range.from),
+          to: toIso(range.to),
+        }),
+      ),
+    ]);
+
+  const cashBalance = balanceSheet.assets
+    .filter((a) => a.code === "1010" || a.code === "1020")
+    .reduce((sum, a) => sum + a.balance, 0);
+
+  const arTotal = arAging.rows.reduce((sum, r) => sum + r.balanceDue, 0);
+  const apTotal = apAging.rows.reduce((sum, r) => sum + r.balanceDue, 0);
+
+  const monthlyPerformance = monthlyStatements.map((stmt, i) => ({
+    month: MONTH_LABELS[monthlyRanges[i].from.getUTCMonth()],
+    income: stmt.totalIncome / 100 / 1_000_000,
+    expenses: stmt.totalExpense / 100 / 1_000_000,
+  }));
+
+  const currentStatement = monthlyStatements[5];
+  const monthStart = currentRange.from;
+
+  const invoiceCount = invoicesRes.invoices.filter(
+    (inv) =>
+      new Date(inv.issueDate) >= monthStart &&
+      (["confirmed", "partially_paid", "paid"] as string[]).includes(inv.status),
+  ).length;
+
+  const expenseCount = expensesRes.expenses.filter(
+    (exp) => new Date(exp.date) >= monthStart && exp.status === "posted",
+  ).length;
+
+  return {
+    cashBalance,
+    monthIncome: currentStatement.totalIncome,
+    monthExpense: currentStatement.totalExpense,
+    netIncome: currentStatement.netIncome,
+    arTotal,
+    arCount: arAging.rows.length,
+    apTotal,
+    apCount: apAging.rows.length,
+    taxReserved: taxSummary.totalTaxCollected,
+    invoiceCount,
+    expenseCount,
+    monthlyPerformance,
+  };
 }
 
 export function DashboardPage({ onNavigate }: DashboardPageProps) {
-  const maxMonthlyValue = Math.max(
-    ...monthlyPerformance.flatMap((month) => [month.income, month.expenses]),
-  );
+  const { accessToken, company } = useAuth();
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!accessToken) return;
+    let cancelled = false;
+
+    setLoading(true);
+    setError(null);
+    loadDashboardData(accessToken)
+      .then((result) => {
+        if (!cancelled) setData(result);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof ApiError ? err.message : "No se pudo cargar el resumen.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accessToken]);
+
+  const kpis = data
+    ? [
+        {
+          label: "Banco y caja",
+          value: formatCurrency(data.cashBalance),
+          helper: "Saldo en cuentas de banco y caja",
+          moduleId: "banking" as ModuleId,
+        },
+        {
+          label: "Ingresos del mes",
+          value: formatCurrency(data.monthIncome),
+          helper: `${data.invoiceCount} facturas confirmadas`,
+          moduleId: "invoices" as ModuleId,
+        },
+        {
+          label: "Gastos del mes",
+          value: formatCurrency(data.monthExpense),
+          helper: `${data.expenseCount} gastos registrados`,
+          moduleId: "expenses" as ModuleId,
+        },
+        {
+          label: "Utilidad estimada",
+          value: formatCurrency(data.netIncome),
+          helper:
+            data.monthIncome > 0
+              ? `${((data.netIncome / data.monthIncome) * 100).toFixed(1)}% margen operativo`
+              : "Sin ingresos registrados aun",
+          moduleId: "reports" as ModuleId,
+        },
+      ]
+    : [];
+
+  const openItems = data
+    ? [
+        {
+          label: "Cuentas por cobrar",
+          value: data.arTotal,
+          detail: `${data.arCount} facturas abiertas`,
+        },
+        {
+          label: "Cuentas por pagar",
+          value: data.apTotal,
+          detail: `${data.apCount} cuentas por pagar abiertas`,
+        },
+        {
+          label: "Impuesto reservado",
+          value: data.taxReserved,
+          detail: "Estimado del periodo",
+        },
+      ]
+    : [];
+
+  const maxMonthlyValue = data
+    ? Math.max(1, ...data.monthlyPerformance.flatMap((month) => [month.income, month.expenses]))
+    : 1;
 
   return (
     <div className="mx-auto flex max-w-7xl flex-col gap-6">
@@ -149,8 +242,8 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
                 Contabilidad, ventas e inventario en un solo tablero
               </h2>
               <p className="mt-3 max-w-3xl text-sm leading-6 text-ink-700">
-                Este flujo esta pensado para WKD PRODUCTS: registrar facturas,
-                gastos, pagos, bancos y asientos contables sin administrar multiples
+                Este flujo esta pensado para {company?.displayName ?? "tu empresa"}: registrar
+                facturas, gastos, pagos, bancos y asientos contables sin administrar multiples
                 companias.
               </p>
             </div>
@@ -178,41 +271,53 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
           </div>
         </div>
 
-        <aside className="rounded-md border border-amberline/40 bg-white p-6">
+        <aside className="rounded-md border border-ink-100 bg-white p-6">
           <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 place-items-center rounded-md bg-amberline/15 text-amberline">
-              <TrendingUp aria-hidden="true" size={20} />
+            <div className="grid h-10 w-10 place-items-center rounded-md bg-mint-700/15 text-mint-700">
+              <Landmark aria-hidden="true" size={20} />
             </div>
-            <h3 className="text-base font-semibold">Prediccion activa</h3>
+            <h3 className="text-base font-semibold">Resumen fiscal</h3>
           </div>
           <p className="mt-3 text-sm leading-6 text-ink-700">
-            La sugerencia de pedidos combina inventario disponible, venta diaria,
-            tiempo de entrega y stock de seguridad.
+            {PRODUCT_CONFIG.fiscalDisclaimer}
           </p>
           <button
             className="mt-5 flex w-full items-center justify-center gap-2 rounded-md bg-mint-700 px-4 py-2 text-sm font-semibold text-white hover:bg-mint-600"
-            onClick={() => onNavigate("products")}
+            onClick={() => onNavigate("reports")}
             type="button"
           >
-            <ShoppingCart aria-hidden="true" size={17} />
-            Revisar inventario
+            <BarChart3 aria-hidden="true" size={17} />
+            Ver reportes
           </button>
         </aside>
       </section>
 
+      {error ? (
+        <section className="rounded-md border border-amberline/40 bg-white p-4 text-sm text-amberline">
+          {error}
+        </section>
+      ) : null}
+
       <section className="grid grid-cols-4 gap-4">
-        {kpis.map((card) => (
-          <button
-            className="rounded-md border border-ink-100 bg-white p-5 text-left hover:border-mint-700"
-            key={card.label}
-            onClick={() => onNavigate(card.moduleId)}
-            type="button"
-          >
-            <p className="text-sm text-ink-700">{card.label}</p>
-            <p className="mt-3 text-xl font-semibold">{formatCurrency(card.value)}</p>
-            <p className="mt-2 text-xs text-ink-700">{card.helper}</p>
-          </button>
-        ))}
+        {(loading && !data ? [0, 1, 2, 3] : kpis).map((card, index) =>
+          typeof card === "number" ? (
+            <div
+              className="h-[104px] animate-pulse rounded-md border border-ink-100 bg-ink-50"
+              key={index}
+            />
+          ) : (
+            <button
+              className="rounded-md border border-ink-100 bg-white p-5 text-left hover:border-mint-700"
+              key={card.label}
+              onClick={() => onNavigate(card.moduleId)}
+              type="button"
+            >
+              <p className="text-sm text-ink-700">{card.label}</p>
+              <p className="mt-3 text-xl font-semibold">{card.value}</p>
+              <p className="mt-2 text-xs text-ink-700">{card.helper}</p>
+            </button>
+          ),
+        )}
       </section>
 
       <section className="grid grid-cols-[1fr_360px] gap-6">
@@ -233,16 +338,16 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
           </div>
 
           <div className="mt-6 grid h-64 grid-cols-6 items-end gap-5 border-b border-ink-100 pb-4">
-            {monthlyPerformance.map((month) => (
+            {(data?.monthlyPerformance ?? []).map((month) => (
               <div className="flex h-full flex-col justify-end gap-3" key={month.month}>
                 <div className="flex flex-1 items-end gap-2">
                   <div
-                    aria-label={`${month.month} ingresos ${month.income} millones`}
+                    aria-label={`${month.month} ingresos ${month.income.toFixed(2)} millones`}
                     className="w-full rounded-t-md bg-mint-700"
                     style={{ height: `${(month.income / maxMonthlyValue) * 100}%` }}
                   />
                   <div
-                    aria-label={`${month.month} gastos ${month.expenses} millones`}
+                    aria-label={`${month.month} gastos ${month.expenses.toFixed(2)} millones`}
                     className="w-full rounded-t-md bg-amberline"
                     style={{ height: `${(month.expenses / maxMonthlyValue) * 100}%` }}
                   />
@@ -277,64 +382,7 @@ export function DashboardPage({ onNavigate }: DashboardPageProps) {
               </div>
             ))}
           </div>
-          <p className="mt-5 rounded-md bg-ink-50 p-3 text-xs leading-5 text-ink-700">
-            {PRODUCT_CONFIG.fiscalDisclaimer}
-          </p>
         </div>
-      </section>
-
-      <section className="rounded-md border border-ink-100 bg-white">
-        <div className="flex items-center justify-between border-b border-ink-100 p-6">
-          <div>
-            <h3 className="text-base font-semibold">Pedidos sugeridos</h3>
-            <p className="mt-1 text-sm text-ink-700">
-              Basado en rotacion, tiempo de entrega y stock de seguridad.
-            </p>
-          </div>
-          <PackageCheck aria-hidden="true" className="text-mint-700" size={24} />
-        </div>
-
-        <div className="grid grid-cols-[1.4fr_0.8fr_0.8fr_0.8fr_1fr] border-b border-ink-100 px-6 py-3 text-xs font-semibold uppercase tracking-wide text-ink-700">
-          <span>Producto</span>
-          <span>Stock</span>
-          <span>Dias</span>
-          <span>Pedir</span>
-          <span>Proveedor</span>
-        </div>
-
-        {purchaseForecast.map((item) => {
-          const forecast = getForecast(item);
-          const isUrgent = item.stock <= forecast.reorderPoint;
-
-          return (
-            <div
-              className="grid grid-cols-[1.4fr_0.8fr_0.8fr_0.8fr_1fr] items-center border-b border-ink-100 px-6 py-4 last:border-b-0"
-              key={item.sku}
-            >
-              <div>
-                <p className="font-semibold text-ink-900">{item.name}</p>
-                <p className="mt-1 text-xs text-ink-700">{item.sku}</p>
-              </div>
-              <span className="text-sm text-ink-800">{item.stock} uds</span>
-              <span className="text-sm text-ink-800">{forecast.daysOnHand} dias</span>
-              <span className="text-sm font-semibold text-ink-900">
-                {forecast.suggestedOrder} uds
-              </span>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-sm text-ink-800">{item.supplier}</span>
-                <span
-                  className={
-                    isUrgent
-                      ? "rounded-md bg-amberline/15 px-2 py-1 text-xs font-semibold text-ink-900"
-                      : "rounded-md bg-ink-50 px-2 py-1 text-xs font-semibold text-ink-700"
-                  }
-                >
-                  {isUrgent ? "Comprar" : "Vigilar"}
-                </span>
-              </div>
-            </div>
-          );
-        })}
       </section>
     </div>
   );
